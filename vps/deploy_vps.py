@@ -90,7 +90,7 @@ def main():
     # ---- 2/6 安装 OpenVPN ----
     print("2/6 安装 OpenVPN ...")
     code, o, e = sh("dpkg -l openvpn 2>/dev/null | grep ^ii || echo 'NOT_INSTALLED'")
-    if "NOT_INSTALLED" in code:
+    if "NOT_INSTALLED" in o:
         sh("apt-get update -y && apt-get install -y openvpn")
         print("  OpenVPN 已安装")
     else:

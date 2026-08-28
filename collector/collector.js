@@ -2,23 +2,18 @@
 // 运行：node collector/collector.js   （可用环境变量 PROXY 覆盖代理地址）
 const WebSocket = require("ws");
 const { HttpsProxyAgent } = require("https-proxy-agent");
-
 const PUT_URL = "https://btc.hhxx.eu.org/api/put";
 const PUT_TOKEN = "pmtk_9f3ac41e7d2b8056";
 const PROXY = process.env.PROXY || "http://127.0.0.1:10808";
 const agent = new HttpsProxyAgent(PROXY);
-
 const BINANCE_MAP = { BTCUSDT: "btc", ETHUSDT: "eth", SOLUSDT: "sol", BNBUSDT: "bnb", DOGEUSDT: "doge" };
 const OKX_MAP = { "BTC-USDT": "btc", "ETH-USDT": "eth", "SOL-USDT": "sol", "BNB-USDT": "bnb", "DOGE-USDT": "doge" };
 const PM_MAP = { "btc/usd": "btc", "eth/usd": "eth", "sol/usd": "sol", "xrp/usd": "xrp", "bnb/usd": "bnb", "doge/usd": "doge" };
 const PM_BINANCE_MAP = { btcusdt: "btc", ethusdt: "eth", solusdt: "sol", xrpusdt: "xrp", bnbusdt: "bnb", dogeusdt: "doge" };
 const IDX = { btc: 0, eth: 1, sol: 2, bnb: 3, doge: 4, xrp: 5 };
-
 const latest = { binance: {}, okx: {}, polymarket: {} };
 const state = { binance: "init", okx: "init", polymarket: "init" };
-
 function log(...a) { console.log(new Date().toLocaleTimeString("zh-CN", { hour12: false }), ...a); }
-
 function connectBinance() {
   try {
     const streams = Object.keys(BINANCE_MAP).map((s) => s.toLowerCase() + "@miniTicker").join("/");
@@ -31,7 +26,6 @@ function connectBinance() {
     ws.on("error", (e) => { state.binance = "err:" + ((e && e.message) || e).slice(0, 60); try { ws.close(); } catch (_) {} });
   } catch (e) { setTimeout(connectBinance, 5000); }
 }
-
 function connectOKX() {
   try {
     const ws = new WebSocket("wss://ws.okx.com:8443/ws/v5/public", { agent });
@@ -48,7 +42,6 @@ function connectOKX() {
     const ping = setInterval(() => { try { if (ws.readyState === 1) ws.send("ping"); else clearInterval(ping); } catch (e) { clearInterval(ping); } }, 15000);
   } catch (e) { setTimeout(connectOKX, 5000); }
 }
-
 function connectPM() {
   try {
     const ws = new WebSocket("wss://ws-live-data.polymarket.com", { agent });
@@ -83,11 +76,9 @@ function connectPM() {
     const ping = setInterval(() => { try { if (ws.readyState === 1) ws.send("PING"); else clearInterval(ping); } catch (e) { clearInterval(ping); } }, 5000);
   } catch (e) { setTimeout(connectPM, 5000); }
 }
-
 function bucketStart(ts) { return Math.floor(ts / 10000) * 10000; }
 const buf = [];
 let flushing = false;
-
 setInterval(() => {
   const ts = bucketStart(Date.now()) - 10000;
   for (const src of ["binance", "okx", "polymarket"]) {
@@ -99,7 +90,6 @@ setInterval(() => {
   }
   flush();
 }, 10000);
-
 async function flush() {
   if (flushing || !buf.length) return;
   flushing = true;
@@ -117,7 +107,6 @@ async function flush() {
   } catch (e) { buf.unshift(...bars); }
   flushing = false;
 }
-
 connectBinance(); connectOKX(); connectPM();
 setInterval(() => log("状态", JSON.stringify(state)), 60000);
 log("本地采集器已启动，代理", PROXY, "→ 推送目标", PUT_URL);

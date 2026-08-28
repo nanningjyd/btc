@@ -20,6 +20,8 @@ header h1 { font-size: 15px; font-weight: 600; color: #fff; white-space: nowrap;
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .dot.ok { background: #22a06b; } .dot.bad { background: #e04b4b; } .dot.mid { background: #ef9f27; }
 .spacer { flex: 1; }
+.vpngate-link { display: inline-block; background: #1a2029; color: #aab4c0; border: 1px solid #28313d; padding: 5px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; white-space: nowrap; }
+.vpngate-link:hover { border-color: #185fa5; color: #fff; }
 select, button.act { background: #1a2029; color: #d8dee6; border: 1px solid #28313d; border-radius: 6px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
 .badge { padding: 4px 16px; background: #141920; border-bottom: 1px solid #232a33; color: #8b97a5; font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; }
 .badge .warn { color: #ef9f27; }
@@ -69,6 +71,7 @@ footer { padding: 8px 16px 20px; color: #55606d; font-size: 12px; }
     <span class="chip" id="chipRun">运行 <b>0s</b></span>
   </div>
   <div class="spacer"></div>
+  <a class="vpngate-link" href="/vpngate">⌁ VPNGate 服务器</a>
   <select id="dateSel"><option value="today">今天</option><option value="yesterday">昨天</option></select>
   <button class="act" id="btnParams">参数</button>
 </header>

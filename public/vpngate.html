@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VPNGate 服务器状态 · btc-monitor</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 24px; line-height: 1.6;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .header {
+    display: flex; align-items: center; gap: 16px;
+    margin-bottom: 24px; padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .header h1 { font-size: 22px; font-weight: 600; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 20px; padding: 4px 12px; font-size: 12px;
+  }
+  .badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .badge.ok .dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .badge.err .dot { background: var(--red); }
+  .status-bar {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; margin-bottom: 20px;
+    display: flex; gap: 32px; flex-wrap: wrap;
+  }
+  .stat { display: flex; flex-direction: column; }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-value { font-size: 20px; font-weight: 600; margin-top: 2px; }
+  .stat-value.green { color: var(--green); }
+  .stat-value.red { color: var(--red); }
+  .stat-value.yellow { color: var(--yellow); }
+  .section-title {
+    font-size: 14px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+  }
+  .server-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 12px; margin-bottom: 28px;
+  }
+  .server-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px; transition: border-color 0.2s;
+  }
+  .server-card:hover { border-color: var(--accent); }
+  .server-card.top { border-color: var(--green); }
+  .server-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+  .server-name { font-weight: 600; font-size: 14px; }
+  .server-country { font-size: 12px; color: var(--muted); }
+  .score-badge {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 12px; padding: 2px 8px; font-size: 12px; font-weight: 600;
+  }
+  .score-badge.high { color: var(--green); border-color: var(--green); }
+  .score-badge.mid { color: var(--yellow); border-color: var(--yellow); }
+  .score-badge.low { color: var(--red); border-color: var(--red); }
+  .server-meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .server-meta span { display: flex; align-items: center; gap: 4px; }
+  .server-meta .val { color: var(--text); font-weight: 500; }
+  .controls { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+  .controls select, .controls input {
+    background: var(--card); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 8px 12px; font-size: 13px;
+  }
+  .controls button {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  .controls button:hover { opacity: 0.85; }
+  .loading { text-align: center; padding: 48px; color: var(--muted); }
+  .loading .spinner {
+    width: 32px; height: 32px; border: 3px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.8s linear infinite; margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .info-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; margin-bottom: 20px; font-size: 13px; color: var(--muted);
+  }
+  .info-box code { background: var(--bg); padding: 1px 6px; border-radius: 4px; font-size: 12px; color: var(--accent); }
+  .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>VPNGate 服务器状态</h1>
+  <a class="badge" href="/"><span class="dot" style="background:var(--accent)"></span>返回 btc-monitor</a>
+  <div class="badge" id="connBadge"><span class="dot"></span><span id="connText">检测中...</span></div>
+</div>
+
+<div class="status-bar">
+  <div class="stat">
+    <span class="stat-label">可用服务器</span>
+    <span class="stat-value" id="totalCount">-</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">当前连接</span>
+    <span class="stat-value" id="currentServer">-</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">PM 可达</span>
+    <span class="stat-value" id="pmReach">-</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">刷新</span>
+    <span class="stat-value" id="lastRefresh">-</span>
+  </div>
+</div>
+
+<div class="info-box">
+  数据来源：<code>https://www.vpngate.net/api/iphone/</code> &nbsp;|&nbsp;
+  评分算法综合了 VPNGate Score、延迟、速度、在线时长和活跃用户数 &nbsp;|&nbsp;
+  每 <code>60s</code> 自动刷新 &nbsp;|&nbsp;
+  本页面通过 <code>/api/vpngate-servers</code> 获取数据
+</div>
+
+<div class="controls">
+  <select id="countryFilter">
+    <option value="">全部国家</option>
+    <option value="JP">日本 🇯🇵</option>
+    <option value="US">美国 🇺🇸</option>
+    <option value="DE">德国 🇩🇪</option>
+    <option value="GB">英国 🇬🇧</option>
+    <option value="FR">法国 🇫🇷</option>
+    <option value="NL">荷兰 🇳🇱</option>
+    <option value="SG">新加坡 🇸🇬</option>
+    <option value="KR">韩国 🇰🇷</option>
+    <option value="AU">澳大利亚 🇦🇺</option>
+    <option value="CA">加拿大 🇨🇦</option>
+    <option value="TW">台湾 🇹🇼</option>
+    <option value="HK">香港 🇭🇰</option>
+  </select>
+  <select id="minScore">
+    <option value="0">最低评分: 0+</option>
+    <option value="30">最低评分: 30+</option>
+    <option value="50" selected>最低评分: 50+</option>
+    <option value="70">最低评分: 70+</option>
+    <option value="80">最低评分: 80+</option>
+  </select>
+  <select id="maxPing">
+    <option value="9999">最高延迟: 无限制</option>
+    <option value="200">最高延迟: 200ms</option>
+    <option value="300" selected>最高延迟: 300ms</option>
+    <option value="500">最高延迟: 500ms</option>
+  </select>
+  <button onclick="fetchServers()">刷新</button>
+</div>
+
+<div class="section-title">📡 VPNGate 服务器列表</div>
+<div class="server-grid" id="serverGrid">
+  <div class="loading"><div class="spinner"></div>加载中...</div>
+</div>
+
+<div class="footer">
+  btc-monitor · VPNGate VPN 方案 · 数据每秒刷新 · 
+  <a href="https://www.vpngate.net/cn/" target="_blank">VPNGate 官网</a>
+</div>
+
+<script>
+let allServers = [];
+
+async function fetchServers() {
+  try {
+    const resp = await fetch('/api/vpngate-servers');
+    const data = await resp.json();
+    allServers = data.servers || [];
+    document.getElementById('totalCount').textContent = allServers.length;
+    document.getElementById('lastRefresh').textContent = new Date().toLocaleTimeString('zh-CN');
+    
+    if (data.polymarket_reachable != null) {
+      const el = document.getElementById('pmReach');
+      if (data.polymarket_reachable) {
+        el.textContent = '✓ 可达'; el.className = 'stat-value green';
+      } else {
+        el.textContent = '✗ 不可达'; el.className = 'stat-value red';
+      }
+    }
+    if (data.current_server) {
+      document.getElementById('currentServer').textContent = data.current_server;
+    }
+    renderServers();
+    
+    const badge = document.getElementById('connBadge');
+    const connText = document.getElementById('connText');
+    if (data.polymarket_reachable) {
+      badge.className = 'badge ok'; connText.textContent = 'VPN 已连接';
+    } else {
+      badge.className = 'badge err'; connText.textContent = 'PM 不可达';
+    }
+  } catch (e) {
+    document.getElementById('serverGrid').innerHTML = 
+      '<div class="loading">加载失败: ' + e.message + '</div>';
+  }
+}
+
+function renderServers() {
+  const country = document.getElementById('countryFilter').value;
+  const minScore = parseFloat(document.getElementById('minScore').value);
+  const maxPing = parseInt(document.getElementById('maxPing').value);
+  
+  let filtered = allServers.filter(s => {
+    if (country && !s.country.includes(country)) return false;
+    if (s.score < minScore) return false;
+    if (s.ping > maxPing) return false;
+    return true;
+  });
+  
+  const grid = document.getElementById('serverGrid');
+  if (!filtered.length) {
+    grid.innerHTML = '<div class="loading">无符合条件的服务器</div>';
+    return;
+  }
+  
+  grid.innerHTML = filtered.map((s, i) => {
+    const scoreClass = s.score >= 70 ? 'high' : s.score >= 40 ? 'mid' : 'low';
+    const isTop = i === 0;
+    const flags = {'JP':'🇯🇵','US':'🇺🇸','DE':'🇩🇪','GB':'🇬🇧','FR':'🇫🇷','NL':'🇳🇱','SG':'🇸🇬','KR':'🇰🇷','AU':'🇦🇺','CA':'🇨🇦','TW':'🇹🇼','HK':'🇭🇰'};
+    const flag = flags[s.country] || '';
+    return `
+      <div class="server-card ${isTop ? 'top' : ''}">
+        <div class="server-header">
+          <div>
+            <div class="server-name">${isTop ? '★ ' : ''}${s.hostname}</div>
+            <div class="server-country">${flag} ${s.country_long || s.country} · ${s.ip}</div>
+          </div>
+          <div class="score-badge ${scoreClass}">${s.score.toFixed(1)}</div>
+        </div>
+        <div class="server-meta">
+          <span>延迟 <span class="val">${s.ping}ms</span></span>
+          <span>速度 <span class="val">${s.speed} Mbps</span></span>
+          <span>在线 <span class="val">${s.uptime}h</span></span>
+          <span>用户 <span class="val">${s.users}</span></span>
+          <span>协议 <span class="val">${s.log_type === 'n' ? '无日志' : '有日志'}</span></span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+document.getElementById('countryFilter').addEventListener('change', renderServers);
+document.getElementById('minScore').addEventListener('change', renderServers);
+document.getElementById('maxPing').addEventListener('change', renderServers);
+
+fetchServers();
+setInterval(fetchServers, 60000);
+</script>
+</body>
+</html>

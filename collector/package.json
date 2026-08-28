@@ -1,0 +1,9 @@
+{
+  "name": "btc-collector",
+  "private": true,
+  "description": "本地常驻采集器：经 10808 代理连币安/OKX/Polymarket WS，10s 聚合推回 Cloudflare D1",
+  "dependencies": {
+    "https-proxy-agent": "^7.0.5",
+    "ws": "^8.18.0"
+  }
+}

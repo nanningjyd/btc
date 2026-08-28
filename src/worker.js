@@ -71,30 +71,35 @@ function BINANCE_MAP_SYMBOL(instId) {
   return { "BTC-USDT": "btc", "ETH-USDT": "eth", "SOL-USDT": "sol", "BNB-USDT": "bnb", "DOGE-USDT": "doge" }[instId];
 }
 
-// 币安 WebSocket 流（REST 被 CF 出口 geo 封锁，WS 可用）
+// 币安 WebSocket 流（REST 被 CF 出口 geo 封锁，WS 可用）+ 自动重连
 function startBinanceStream() {
   const latest = {};
-  const diag = { opened: false, err: null };
-  let ws = null, closed = false;
-  (async () => {
-    try {
-      const streams = Object.keys(BINANCE_MAP).map((s) => s.toLowerCase() + "@miniTicker").join("/");
-      const resp = await fetch("https://stream.binance.com:9443/stream?streams=" + streams, { headers: { Upgrade: "websocket" } });
-      ws = resp.webSocket;
-      if (!ws) throw new Error("no ws, status " + resp.status);
-      ws.accept();
-      diag.opened = true;
-      ws.addEventListener("message", (ev) => {
-        try {
-          const m = JSON.parse(ev.data);
-          const d = m.data || m;
-          const coin = BINANCE_MAP[d.s];
-          if (coin && d.c != null) latest[coin] = { v: parseFloat(d.c), t: d.E || Date.now() };
-        } catch (e) {}
-      });
-      ws.addEventListener("close", () => { closed = true; });
-    } catch (e) { diag.err = String((e && e.message) || e); closed = true; }
-  })();
+  const diag = { opened: false, err: null, reconnects: 0 };
+  let ws = null, closed = false, attempts = 0;
+  function connect() {
+    if (closed || attempts >= 3) return;
+    attempts++;
+    (async () => {
+      try {
+        const streams = Object.keys(BINANCE_MAP).map((s) => s.toLowerCase() + "@miniTicker").join("/");
+        const resp = await fetch("https://stream.binance.com:9443/stream?streams=" + streams, { headers: { Upgrade: "websocket" } });
+        ws = resp.webSocket;
+        if (!ws) throw new Error("no ws, status " + resp.status);
+        ws.accept();
+        diag.opened = true;
+        ws.addEventListener("message", (ev) => {
+          try {
+            const m = JSON.parse(ev.data);
+            const d = m.data || m;
+            const coin = BINANCE_MAP[d.s];
+            if (coin && d.c != null) latest[coin] = { v: parseFloat(d.c), t: d.E || Date.now() };
+          } catch (e) {}
+        });
+        ws.addEventListener("close", () => { if (!closed) { diag.reconnects++; setTimeout(connect, 1000); } });
+      } catch (e) { diag.err = String((e && e.message) || e); if (!closed && attempts < 3) setTimeout(connect, 1000); }
+    })();
+  }
+  connect();
   return {
     snapshot() {
       const now = Date.now();
@@ -103,7 +108,7 @@ function startBinanceStream() {
       return out;
     },
     diag() { return Object.assign({ n: Object.keys(latest).length }, diag); },
-    stop() { try { if (ws && !closed) ws.close(); } catch (e) {} },
+    stop() { closed = true; try { if (ws) ws.close(); } catch (e) {} },
   };
 }
 
@@ -216,23 +221,26 @@ async function insertBars(env, source, rows) {
   await env.DB.prepare("INSERT OR REPLACE INTO bars (ts,source,btc,eth,sol,bnb,doge,xrp) VALUES " + ph).bind(...params).run();
 }
 
-// 一轮采集：约 60 秒，覆盖 6 个连续 10s 桶；三源均优先 WebSocket 流（REST 被 CF 出口封锁/限频）
+// 一轮采集：约 60 秒，覆盖 6 个连续 10s 桶。
+// 币安用 WS（REST 被 geo 封锁）；OKX 用 REST 单次全量（WS tickers 推送频率过高会打爆免费版 CPU）；Polymarket 用 RTDS WS。
 async function sampleRound(env) {
   const N = parseInt(env.SAMPLES_PER_RUN || "6", 10);
   const samples = [];
   const bns = startBinanceStream();
-  const okx = startOKXStream();
   const pm = startPolymarketStream();
-  await waitMs(2500); // 等待 WS 建立并收到首批数据
+  await waitMs(2000); // 等待币安 WS 建立并收到首批数据
   for (let i = 0; i < N; i++) {
     const now = Date.now();
-    const bucketEnd = bucketStart(now) + 10000;
-    const target = bucketEnd - 800;
-    if (target > now) await waitMs(target - now);
+    let bucketEnd = bucketStart(now) + 10000;
+    let target = bucketEnd - 800;
+    if (target <= now) { target += 10000; bucketEnd += 10000; } // 本桶采样点已过 → 跳到下一桶
+    await waitMs(target - now);
     const ts = bucketEnd - 10000;
-    samples.push({ ts, b: bns.snapshot(), o: okx.snapshot(), p: pm.snapshot() });
+    let o = null;
+    try { o = await fetchOKX(); } catch (e) {}
+    samples.push({ ts, b: bns.snapshot(), o, p: pm.snapshot() });
   }
-  bns.stop(); okx.stop(); pm.stop();
+  bns.stop(); pm.stop();
 
   const rowsBySource = { binance: [], okx: [], polymarket: [] };
   const report = { binance: { ok: 0, err: null }, okx: { ok: 0, err: null }, polymarket: { ok: 0, err: null } };
@@ -240,14 +248,14 @@ async function sampleRound(env) {
     if (s.b && Object.keys(s.b).length) { rowsBySource.binance.push([s.ts, s.b.btc ?? null, s.b.eth ?? null, s.b.sol ?? null, s.b.bnb ?? null, s.b.doge ?? null, null]); report.binance.ok++; }
     else if (!report.binance.err) report.binance.err = "ws empty";
     if (s.o && Object.keys(s.o).length) { rowsBySource.okx.push([s.ts, s.o.btc ?? null, s.o.eth ?? null, s.o.sol ?? null, s.o.bnb ?? null, s.o.doge ?? null, null]); report.okx.ok++; }
-    else if (!report.okx.err) report.okx.err = "ws empty";
+    else if (!report.okx.err) report.okx.err = "rest empty/429";
     if (s.p && Object.keys(s.p).length) {
       rowsBySource.polymarket.push([s.ts, s.p.btc ?? null, s.p.eth ?? null, s.p.sol ?? null, s.p.bnb ?? null, s.p.doge ?? null, s.p.xrp ?? null]);
       report.polymarket.ok++;
     }
   }
   if (!report.polymarket.ok) report.polymarket.err = "no updates in window";
-  report.diags = { binance: bns.diag(), okx: okx.diag(), polymarket: pm.diag() };
+  report.diags = { binance: bns.diag(), okx: null, polymarket: pm.diag() };
 
   for (const src of SOURCES) {
     const now = Date.now();
@@ -264,6 +272,10 @@ async function sampleRound(env) {
     try { await env.DB.prepare("INSERT OR REPLACE INTO meta (k,v) VALUES ('pm_symbols',?)").bind(seen.join(",")).run(); } catch (e) {}
   }
   report.pmSymbols = seen;
+  try {
+    await env.DB.prepare("INSERT OR REPLACE INTO meta (k,v) VALUES ('last_diag',?)")
+      .bind(JSON.stringify({ t: Date.now(), binance: bns.diag(), polymarket: pm.diag() })).run();
+  } catch (e) {}
   return report;
 }
 

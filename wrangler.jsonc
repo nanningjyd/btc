@@ -1,0 +1,23 @@
+{
+  "name": "btc-monitor",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-08-01",
+  "account_id": "2c96f30d0801ff43714a00a936296753",
+  "assets": {
+    "directory": "public"
+  },
+  "triggers": {
+    "crons": ["* * * * *", "5 16 * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "btc-monitor",
+      "database_id": "8e146097-6fce-46fc-9345-3daa9907c7ff"
+    }
+  ],
+  "vars": {
+    "SAMPLES_PER_RUN": "6",
+    "PUT_TOKEN": "pmtk_9f3ac41e7d2b8056"
+  }
+}

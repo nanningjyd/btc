@@ -173,7 +173,8 @@ function startPolymarketStream() {
             const t = p.timestamp ? Number(p.timestamp) : Date.now();
             const isLink = PM_MAP[sym];
             const isTopic = PM_BINANCE_MAP[sym];
-            if (topic === "crypto_prices_chainlink" && isLink) { chainlink[isLink] = { v, t }; seen.add(sym); diag.parsed++; }
+            const isChainlinkTopic = topic === "crypto_prices_chainlink" || topic === "prices.crypto.chainlink.twap" || topic === "crypto_prices_twap_thirty" || topic === "crypto_prices_twap_sixty";
+            if (isChainlinkTopic && isLink) { chainlink[isLink] = { v, t }; seen.add(sym); diag.parsed++; }
             else if (topic === "crypto_prices" && isTopic) { topicBinance[isTopic] = { v, t }; seen.add(sym); diag.parsed++; }
             else if (!topic && (isLink || isTopic)) { (isLink ? chainlink : topicBinance)[isLink || isTopic] = { v, t }; seen.add(sym); diag.parsed++; }
           }
@@ -183,8 +184,18 @@ function startPolymarketStream() {
       ws.send(JSON.stringify({
         action: "subscribe",
         subscriptions: [
-          { topic: "crypto_prices_chainlink", type: "update", filters: "btc/usd,eth/usd,sol/usd,xrp/usd,bnb/usd,doge/usd" },
-          { topic: "crypto_prices", type: "update", filters: "btcusdt,ethusdt,solusdt,xrpusdt,bnbusdt,dogeusdt" },
+          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "btc/usd" }) },
+          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "eth/usd" }) },
+          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "sol/usd" }) },
+          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "xrp/usd" }) },
+          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "bnb/usd" }) },
+          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "doge/usd" }) },
+          { topic: "crypto_prices_twap_thirty", type: "update", filters: JSON.stringify({ symbol: "btc/usd" }) },
+          { topic: "crypto_prices_twap_thirty", type: "update", filters: JSON.stringify({ symbol: "eth/usd" }) },
+          { topic: "crypto_prices_twap_thirty", type: "update", filters: JSON.stringify({ symbol: "sol/usd" }) },
+          { topic: "crypto_prices_twap_sixty", type: "update", filters: JSON.stringify({ symbol: "btc/usd" }) },
+          { topic: "crypto_prices_twap_sixty", type: "update", filters: JSON.stringify({ symbol: "eth/usd" }) },
+          { topic: "crypto_prices_twap_sixty", type: "update", filters: JSON.stringify({ symbol: "sol/usd" }) },
         ],
       }));
       pingTimer = setInterval(() => { try { if (!closed) ws.send("PING"); } catch (e) {} }, 5000);
@@ -406,6 +417,33 @@ async function handleApi(request, env) {
       .bind(source, start, end).all();
     const rows = res.results.map((r) => [r.ts, r.btc, r.eth, r.sol, r.bnb, r.doge, r.xrp]);
     return jresp({ source, start, end, count: rows.length, rows });
+  }
+  if (path === "/api/pm-rest-test") {
+    // 直接从 CF egress 探测 Polymarket REST 可达性
+    const result = { started_at: new Date().toISOString(), endpoints: {}, exit_ip: null };
+    try {
+      const ipResp = await fetch("https://api.ipify.org?format=json", { headers: { Accept: "application/json" } });
+      const ipJson = await ipResp.json();
+      result.exit_ip = ipJson.ip || null;
+    } catch (e) {}
+    const urls = [
+      "https://gamma-api.polymarket.com/markets?limit=1&active=true",
+      "https://gamma-api.polymarket.com/events?limit=1",
+      "https://clob.polymarket.com/markets?limit=1",
+    ];
+    for (const u of urls) {
+      try {
+        const t0 = Date.now();
+        const r = await fetch(u, { headers: { Accept: "application/json" } });
+        const dur = Date.now() - t0;
+        let body = null;
+        try { body = await r.text(); } catch (_) {}
+        result.endpoints[u] = { ok: true, status: r.status, duration_ms: dur, body_preview: (body || "").slice(0, 400) };
+      } catch (e) {
+        result.endpoints[u] = { ok: false, error: String((e && e.message) || e) };
+      }
+    }
+    return jresp(result);
   }
   if (path === "/api/collect") {
     const secret = url.searchParams.get("secret");

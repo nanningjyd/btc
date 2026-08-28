@@ -3,6 +3,15 @@ const SOURCES = ["binance", "okx", "polymarket"];
 const BINANCE_MAP = { BTCUSDT: "btc", ETHUSDT: "eth", SOLUSDT: "sol", BNBUSDT: "bnb", DOGEUSDT: "doge" };
 const PM_MAP = { "btc/usd": "btc", "eth/usd": "eth", "sol/usd": "sol", "xrp/usd": "xrp", "bnb/usd": "bnb", "doge/usd": "doge" };
 const PM_BINANCE_MAP = { btcusdt: "btc", ethusdt: "eth", solusdt: "sol", xrpusdt: "xrp", bnbusdt: "bnb", dogeusdt: "doge" };
+// 价格区间映射：用于从 payload.data 中无 symbol 字段的 RTDS 消息识别币种
+const PM_PRICE_RANGES = [
+  { min: 50000, max: 200000, sym: "btc/usd" },
+  { min: 1500,  max: 5000,   sym: "eth/usd" },
+  { min: 50,    max: 200,    sym: "sol/usd" },
+  { min: 300,   max: 1000,   sym: "bnb/usd" },
+  { min: 0.5,   max: 5,      sym: "xrp/usd" },
+  { min: 0.0001,max: 0.5,    sym: "doge/usd" },
+];
 const TZ = 8 * 3600 * 1000;
 function bucketStart(ts) { return Math.floor(ts / 10000) * 10000; }
 function waitMs(ms) {
@@ -148,6 +157,8 @@ function startPolymarketStream() {
   const seen = new Set();
   const diag = { opened: false, msgs: 0, parsed: 0, err: null };
   let ws = null, closed = false, pingTimer = null;
+  let rawMsgs = []; // 保留最近 3 条原始消息用于诊断
+  let msgHeaders = []; // 保留最近 3 条消息头部（前 200 字符，含 topic/symbol）
   (async () => {
     try {
       const resp = await fetch("https://ws-live-data.polymarket.com", { headers: { Upgrade: "websocket" } });
@@ -160,42 +171,72 @@ function startPolymarketStream() {
         try {
           const raw = typeof ev.data === "string" ? ev.data : "";
           if (!raw || raw === "PONG") return;
-          const msg = JSON.parse(raw);
-          const topic = msg.topic || "";
+          // 保留原始消息用于诊断（最多 3 条）
+          if (rawMsgs.length < 3) {
+            try { rawMsgs.push(raw.slice(0, 1500)); } catch (e) {}
+            try { msgHeaders.push(raw.slice(0, 400)); } catch (e) {}
+          }
+          let msg;
+          try { msg = JSON.parse(raw); } catch (e) { return; }
+          // RTDS 消息结构（两种）：
+          // A) { payload: { data: [{timestamp, value}, ...] } }  ← Chainlink/Binance 聚合格式，无 symbol
+          // B) { payload: { symbol, value, timestamp } }        ← 单条格式，有 symbol
           let items = [];
-          if (msg.payload) items = Array.isArray(msg.payload) ? msg.payload : [msg.payload];
-          else if (msg.symbol) items = [msg];
+          if (msg.payload && msg.payload.data && Array.isArray(msg.payload.data)) {
+            items = msg.payload.data; // 价格序列数组，需按价格推断 symbol
+          } else if (msg.payload) {
+            items = Array.isArray(msg.payload) ? msg.payload : [msg.payload];
+          } else if (msg.symbol) {
+            items = [msg];
+          } else {
+            items = [msg];
+          }
           for (const p of items) {
-            const sym = String(p.symbol || "").toLowerCase();
-            if (!sym) continue;
             const v = parseFloat(p.value != null ? p.value : p.price);
             if (!isFinite(v)) continue;
             const t = p.timestamp ? Number(p.timestamp) : Date.now();
-            const isLink = PM_MAP[sym];
-            const isTopic = PM_BINANCE_MAP[sym];
-            const isChainlinkTopic = topic === "crypto_prices_chainlink" || topic === "prices.crypto.chainlink.twap" || topic === "crypto_prices_twap_thirty" || topic === "crypto_prices_twap_sixty";
-            if (isChainlinkTopic && isLink) { chainlink[isLink] = { v, t }; seen.add(sym); diag.parsed++; }
-            else if (topic === "crypto_prices" && isTopic) { topicBinance[isTopic] = { v, t }; seen.add(sym); diag.parsed++; }
-            else if (!topic && (isLink || isTopic)) { (isLink ? chainlink : topicBinance)[isLink || isTopic] = { v, t }; seen.add(sym); diag.parsed++; }
+            // 优先从 symbol 字段识别，否则按价格区间推断
+            let sym = String(p.symbol || "").toLowerCase().trim();
+            let normalized = "";
+            if (sym) {
+              // 标准化 symbol: "btcusdt" -> "btc/usd", "BTC" -> "btc/usd"
+              normalized = sym;
+              if (/^btcusdt$/i.test(sym)) normalized = "btc/usd";
+              else if (/^ethusdt$/i.test(sym)) normalized = "eth/usd";
+              else if (/^solusdt$/i.test(sym)) normalized = "sol/usd";
+              else if (/^xrpusdt$/i.test(sym)) normalized = "xrp/usd";
+              else if (/^bnbusdt$/i.test(sym)) normalized = "bnb/usd";
+              else if (/^dogeusdt$/i.test(sym)) normalized = "doge/usd";
+            } else {
+              // 无 symbol：按价格区间推断币种
+              for (const pr of PM_PRICE_RANGES) {
+                if (v >= pr.min && v <= pr.max) {
+                  normalized = pr.sym;
+                  break;
+                }
+              }
+            }
+            if (!normalized) continue;
+            const isLink = PM_MAP[normalized];
+            const isTopic = PM_BINANCE_MAP[sym || normalized];
+            if (isLink || isTopic) {
+              if (isLink) chainlink[isLink] = { v, t };
+              if (isTopic) topicBinance[isTopic] = { v, t };
+              seen.add(normalized || sym);
+              diag.parsed++;
+            }
           }
         } catch (e) {}
       });
       ws.addEventListener("close", () => { closed = true; });
+      // 正确格式: Binance 用逗号分隔字符串, Chainlink 用 JSON 字符串 (注意: filters 必须是字符串, 不能是对象)
       ws.send(JSON.stringify({
         action: "subscribe",
         subscriptions: [
-          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "btc/usd" }) },
-          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "eth/usd" }) },
-          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "sol/usd" }) },
-          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "xrp/usd" }) },
-          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "bnb/usd" }) },
-          { topic: "prices.crypto.chainlink.twap", type: "update", filters: JSON.stringify({ symbol: "doge/usd" }) },
-          { topic: "crypto_prices_twap_thirty", type: "update", filters: JSON.stringify({ symbol: "btc/usd" }) },
-          { topic: "crypto_prices_twap_thirty", type: "update", filters: JSON.stringify({ symbol: "eth/usd" }) },
-          { topic: "crypto_prices_twap_thirty", type: "update", filters: JSON.stringify({ symbol: "sol/usd" }) },
-          { topic: "crypto_prices_twap_sixty", type: "update", filters: JSON.stringify({ symbol: "btc/usd" }) },
-          { topic: "crypto_prices_twap_sixty", type: "update", filters: JSON.stringify({ symbol: "eth/usd" }) },
-          { topic: "crypto_prices_twap_sixty", type: "update", filters: JSON.stringify({ symbol: "sol/usd" }) },
+          { topic: "crypto_prices", type: "update", filters: "btcusdt,ethusdt,solusdt,xrpusdt,bnbusdt,dogeusdt" },
+          { topic: "crypto_prices_chainlink", type: "update", filters: "{\"symbol\":\"btc/usd\"}" },
+          { topic: "crypto_prices_chainlink", type: "update", filters: "{\"symbol\":\"eth/usd\"}" },
+          { topic: "crypto_prices_chainlink", type: "update", filters: "{\"symbol\":\"sol/usd\"}" },
         ],
       }));
       pingTimer = setInterval(() => { try { if (!closed) ws.send("PING"); } catch (e) {} }, 5000);
@@ -211,6 +252,8 @@ function startPolymarketStream() {
     },
     seenSymbols() { return Array.from(seen); },
     diag() { return Object.assign({}, diag); },
+    rawMsgs() { return rawMsgs; },
+    msgHeaders() { return msgHeaders; },
     stop() { if (pingTimer) clearInterval(pingTimer); try { if (ws && !closed) ws.close(); } catch (e) {} },
   };
 }
@@ -270,6 +313,18 @@ async function sampleRound(env) {
     try { await env.DB.prepare("INSERT OR REPLACE INTO meta (k,v) VALUES ('pm_symbols',?)").bind(seen.join(",")).run(); } catch (e) {}
   }
   report.pmSymbols = seen;
+  // 保存 PM WS 原始消息用于诊断
+  const pRaw = pm.rawMsgs();
+  if (pRaw.length) {
+    try { await env.DB.prepare("INSERT OR REPLACE INTO meta (k,v) VALUES ('pm_raw_msgs',?)")
+      .bind(JSON.stringify(pRaw)).run(); } catch (e) {}
+  }
+  // 保存消息头部（前400字符，含 topic/symbol）用于诊断
+  const pHdr = pm.msgHeaders();
+  if (pHdr.length) {
+    try { await env.DB.prepare("INSERT OR REPLACE INTO meta (k,v) VALUES ('pm_msg_headers',?)")
+      .bind(JSON.stringify(pHdr)).run(); } catch (e) {}
+  }
   try {
     await env.DB.prepare("INSERT OR REPLACE INTO meta (k,v) VALUES ('last_diag',?)")
       .bind(JSON.stringify({ t: Date.now(), binance: bns.diag(), polymarket: pm.diag() })).run();
@@ -444,6 +499,13 @@ async function handleApi(request, env) {
       }
     }
     return jresp(result);
+  }
+  if (path === "/api/pm-ws-debug") {
+    // 查看最近一次 cron 采集时 PM WS 收到的原始消息
+    const metaRows = await env.DB.prepare("SELECT k,v FROM meta WHERE k IN ('last_diag','pm_raw_msgs','pm_symbols','pm_msg_headers')").all();
+    const meta = {};
+    for (const r of metaRows.results) meta[r.k] = r.v;
+    return jresp({ now: Date.now(), meta });
   }
   if (path === "/api/collect") {
     const secret = url.searchParams.get("secret");

@@ -7,29 +7,24 @@ const BINANCE_MAP = { BTCUSDT: "btc", ETHUSDT: "eth", SOLUSDT: "sol", BNBUSDT: "
 const OKX_MAP = { "BTC-USDT": "btc", "ETH-USDT": "eth", "SOL-USDT": "sol", "BNB-USDT": "bnb", "DOGE-USDT": "doge" };
 const PM_MAP = { "btc/usd": "btc", "eth/usd": "eth", "sol/usd": "sol", "xrp/usd": "xrp", "bnb/usd": "bnb", "doge/usd": "doge" };
 const PM_BINANCE_MAP = { btcusdt: "btc", ethusdt: "eth", solusdt: "sol", xrpusdt: "xrp", bnbusdt: "bnb", dogeusdt: "doge" };
-
 let params = { threshold: 0.15, before: -60, after: 300, minGap: 30, mode2: false };
 let analysisDate = "today"; // today | yesterday
 let started = false;
-
 const data = {}; // source -> { map: Map(ts->row[6]), keys: 升序 ts 数组 }
 for (const s of SOURCES) data[s] = { map: new Map(), keys: [] };
 const liveLatest = { binance: {}, okx: {}, polymarket: {} };
 const connState = { binance: "init", okx: "init", polymarket: "init" };
 const lastPivotIds = {}; // source_coin -> Set(id)，用于新拐点检测（预测事件）
 const mode2Last = {}; // source_coin -> 上次信号时间
-
 function bucketStart(ts) { return Math.floor(ts / 10000) * 10000; }
 function post(msg) { self.postMessage(msg); }
 function setConn(src, st) { if (connState[src] !== st) { connState[src] = st; post({ type: "conn", source: src, state: st }); } }
-
 // ---------- 数据管理 ----------
 function loadData(src, rows) {
   const d = data[src];
   for (const r of rows) d.map.set(r[0], r.slice(1));
   d.keys = Array.from(d.map.keys()).sort((a, b) => a - b);
 }
-
 function setBar(src, ts, row) {
   const d = data[src];
   if (!d.map.has(ts)) {
@@ -42,13 +37,11 @@ function setBar(src, ts, row) {
     }
   } else d.map.set(ts, row);
 }
-
 function windowRange() {
   const now = Date.now();
   const startToday = Math.floor((now + TZ) / 86400000) * 86400000 - TZ;
   return analysisDate === "yesterday" ? [startToday - 86400000, startToday] : [startToday, now + 20000];
 }
-
 function buildPoints(src, coin) {
   const d = data[src];
   const [a, b] = windowRange();
@@ -62,7 +55,6 @@ function buildPoints(src, coin) {
   }
   return pts;
 }
-
 // ---------- ZigZag 转折点 ----------
 function zigzag(pts) {
   const thr = params.threshold;
@@ -100,7 +92,6 @@ function zigzag(pts) {
   }
   return pivots;
 }
-
 // ---------- 滞后匹配 ----------
 function matchLags(lp, fp) {
   const before = params.before * 1000, after = params.after * 1000;
@@ -121,7 +112,6 @@ function matchLags(lp, fp) {
   }
   return res;
 }
-
 // ---------- 分析主流程 ----------
 function analyze(src) {
   const [a, b] = windowRange();
@@ -140,24 +130,20 @@ function analyze(src) {
   const coins = IDX_COIN.filter((c) => avail[c]);
   const pivotsByCoin = {};
   for (const coin of coins) pivotsByCoin[coin] = zigzag(buildPoints(src, coin));
-
   const leaders = ["btc", "eth"].filter((c) => avail[c]);
   const followerList = ["sol"];
   if (avail["bnb"]) followerList.push("bnb");
   else if (avail["xrp"]) followerList.push("xrp");
   if (avail["doge"] && followerList.indexOf("doge") < 0) followerList.push("doge");
-
   const matches = [];
   const stats = {};
   const predictEvents = [];
-
   for (const L of leaders) {
     const lp = pivotsByCoin[L] || [];
     const ids = new Set(lp.map((p) => p.t + "_" + p.type));
     const prev = lastPivotIds[src + "_" + L];
     const freshPivots = prev ? lp.filter((p) => !prev.has(p.t + "_" + p.type)) : [];
     lastPivotIds[src + "_" + L] = ids;
-
     for (const F of followerList) {
       const fp = pivotsByCoin[F] || [];
       const ms = matchLags(lp, fp);
@@ -187,7 +173,6 @@ function analyze(src) {
       let seq = 0;
       for (const m of ms) matches.push({ leader: L, follower: F, seq: ++seq, leaderT: m.leaderT, leaderConfirm: m.leaderConfirm, type: m.type, followerT: m.followerT, lag: m.lag });
     }
-
     // 新确认的主流币拐点 → 预测事件
     if (freshPivots.length && analysisDate === "today") {
       for (const p of freshPivots) {
@@ -204,7 +189,6 @@ function analyze(src) {
       }
     }
   }
-
   // 模式2：BTC/ETH 15 分钟 ±1% 触发
   const signals = [];
   if (params.mode2 && analysisDate === "today") {
@@ -224,11 +208,9 @@ function analyze(src) {
       }
     }
   }
-
   post({ type: "analysis", source: src, date: analysisDate, coins, leaders, followers: followerList, pivotsByCoin, matches, stats, signals });
   for (const ev of predictEvents) post({ type: "predict", ...ev });
 }
-
 function emitSeries(src) {
   const [a, b] = windowRange();
   const d = data[src];
@@ -241,7 +223,6 @@ function emitSeries(src) {
   }
   post({ type: "series", source: src, date: analysisDate, times, rows });
 }
-
 // ---------- 实时 WS 连接 ----------
 function connectBinance() {
   try {
@@ -260,7 +241,6 @@ function connectBinance() {
     };
   } catch (e) { setTimeout(connectBinance, 8000); }
 }
-
 function connectOKX() {
   try {
     const ws = new WebSocket("wss://ws.okx.com:8443/ws/v5/public");
@@ -286,7 +266,6 @@ function connectOKX() {
     const ping = setInterval(() => { try { if (ws.readyState === 1) ws.send("ping"); else clearInterval(ping); } catch (e) { clearInterval(ping); } }, 20000);
   } catch (e) { setTimeout(connectOKX, 8000); }
 }
-
 function connectPM() {
   try {
     const ws = new WebSocket("wss://ws-live-data.polymarket.com");
@@ -324,7 +303,6 @@ function connectPM() {
     const ping = setInterval(() => { try { if (ws.readyState === 1) ws.send("PING"); else clearInterval(ping); } catch (e) { clearInterval(ping); } }, 5000);
   } catch (e) { setTimeout(connectPM, 8000); }
 }
-
 // ---------- 10s 聚合（对齐到桶边界后 300ms 收桶） ----------
 function doTick() {
   const now = Date.now();
@@ -349,7 +327,6 @@ function scheduleTick() {
   const next = bucketStart(now) + 10000 + 300;
   setTimeout(() => { doTick(); scheduleTick(); }, next - now);
 }
-
 // ---------- 消息入口 ----------
 self.onmessage = (e) => {
   const m = e.data;

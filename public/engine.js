@@ -7,29 +7,39 @@ const BINANCE_MAP = { BTCUSDT: "btc", ETHUSDT: "eth", SOLUSDT: "sol", BNBUSDT: "
 const OKX_MAP = { "BTC-USDT": "btc", "ETH-USDT": "eth", "SOL-USDT": "sol", "BNB-USDT": "bnb", "DOGE-USDT": "doge" };
 const PM_MAP = { "btc/usd": "btc", "eth/usd": "eth", "sol/usd": "sol", "xrp/usd": "xrp", "bnb/usd": "bnb", "doge/usd": "doge" };
 const PM_BINANCE_MAP = { btcusdt: "btc", ethusdt: "eth", solusdt: "sol", xrpusdt: "xrp", bnbusdt: "bnb", dogeusdt: "doge" };
-
 let params = { threshold: 0.15, before: -60, after: 300, minGap: 30, mode2: false };
 let analysisDate = "today"; // today | yesterday
 let started = false;
-
 const data = {}; // source -> { map: Map(ts->row[6]), keys: 升序 ts 数组 }
 for (const s of SOURCES) data[s] = { map: new Map(), keys: [] };
 const liveLatest = { binance: {}, okx: {}, polymarket: {} };
+// Chainlink 多所聚合价（Polymarket 结算源）：最新值 + 环形缓冲（算 TWAP / 窗口起点价）
+const clLatest = {};
+const clBuf = {};
+const CL_RANGES = [
+  { min: 50000, max: 200000, c: "btc" },
+  { min: 1500, max: 5000, c: "eth" },
+  { min: 50, max: 200, c: "sol" },
+  { min: 300, max: 1000, c: "bnb" },
+  { min: 0.5, max: 5, c: "xrp" },
+  { min: 0.0001, max: 0.5, c: "doge" },
+];
+function clCoinByRange(v) {
+  for (const r of CL_RANGES) { if (v >= r.min && v <= r.max) return r.c; }
+  return null;
+}
 const connState = { binance: "init", okx: "init", polymarket: "init" };
 const lastPivotIds = {}; // source_coin -> Set(id)，用于新拐点检测（预测事件）
 const mode2Last = {}; // source_coin -> 上次信号时间
-
 function bucketStart(ts) { return Math.floor(ts / 10000) * 10000; }
 function post(msg) { self.postMessage(msg); }
 function setConn(src, st) { if (connState[src] !== st) { connState[src] = st; post({ type: "conn", source: src, state: st }); } }
-
 // ---------- 数据管理 ----------
 function loadData(src, rows) {
   const d = data[src];
   for (const r of rows) d.map.set(r[0], r.slice(1));
   d.keys = Array.from(d.map.keys()).sort((a, b) => a - b);
 }
-
 function setBar(src, ts, row) {
   const d = data[src];
   if (!d.map.has(ts)) {
@@ -42,13 +52,11 @@ function setBar(src, ts, row) {
     }
   } else d.map.set(ts, row);
 }
-
 function windowRange() {
   const now = Date.now();
   const startToday = Math.floor((now + TZ) / 86400000) * 86400000 - TZ;
   return analysisDate === "yesterday" ? [startToday - 86400000, startToday] : [startToday, now + 20000];
 }
-
 function buildPoints(src, coin) {
   const d = data[src];
   const [a, b] = windowRange();
@@ -62,7 +70,6 @@ function buildPoints(src, coin) {
   }
   return pts;
 }
-
 // ---------- ZigZag 转折点 ----------
 function zigzag(pts) {
   const thr = params.threshold;
@@ -100,7 +107,6 @@ function zigzag(pts) {
   }
   return pivots;
 }
-
 // ---------- 滞后匹配 ----------
 function matchLags(lp, fp) {
   const before = params.before * 1000, after = params.after * 1000;
@@ -121,7 +127,6 @@ function matchLags(lp, fp) {
   }
   return res;
 }
-
 // ---------- 分析主流程 ----------
 function analyze(src) {
   const [a, b] = windowRange();
@@ -140,24 +145,20 @@ function analyze(src) {
   const coins = IDX_COIN.filter((c) => avail[c]);
   const pivotsByCoin = {};
   for (const coin of coins) pivotsByCoin[coin] = zigzag(buildPoints(src, coin));
-
   const leaders = ["btc", "eth"].filter((c) => avail[c]);
   const followerList = ["sol"];
   if (avail["bnb"]) followerList.push("bnb");
   else if (avail["xrp"]) followerList.push("xrp");
   if (avail["doge"] && followerList.indexOf("doge") < 0) followerList.push("doge");
-
   const matches = [];
   const stats = {};
   const predictEvents = [];
-
   for (const L of leaders) {
     const lp = pivotsByCoin[L] || [];
     const ids = new Set(lp.map((p) => p.t + "_" + p.type));
     const prev = lastPivotIds[src + "_" + L];
     const freshPivots = prev ? lp.filter((p) => !prev.has(p.t + "_" + p.type)) : [];
     lastPivotIds[src + "_" + L] = ids;
-
     for (const F of followerList) {
       const fp = pivotsByCoin[F] || [];
       const ms = matchLags(lp, fp);
@@ -187,7 +188,6 @@ function analyze(src) {
       let seq = 0;
       for (const m of ms) matches.push({ leader: L, follower: F, seq: ++seq, leaderT: m.leaderT, leaderConfirm: m.leaderConfirm, type: m.type, followerT: m.followerT, lag: m.lag });
     }
-
     // 新确认的主流币拐点 → 预测事件
     if (freshPivots.length && analysisDate === "today") {
       for (const p of freshPivots) {
@@ -204,7 +204,6 @@ function analyze(src) {
       }
     }
   }
-
   // 模式2：BTC/ETH 15 分钟 ±1% 触发
   const signals = [];
   if (params.mode2 && analysisDate === "today") {
@@ -224,11 +223,9 @@ function analyze(src) {
       }
     }
   }
-
   post({ type: "analysis", source: src, date: analysisDate, coins, leaders, followers: followerList, pivotsByCoin, matches, stats, signals });
   for (const ev of predictEvents) post({ type: "predict", ...ev });
 }
-
 function emitSeries(src) {
   const [a, b] = windowRange();
   const d = data[src];
@@ -241,7 +238,6 @@ function emitSeries(src) {
   }
   post({ type: "series", source: src, date: analysisDate, times, rows });
 }
-
 // ---------- 实时 WS 连接 ----------
 function connectBinance() {
   try {
@@ -260,7 +256,6 @@ function connectBinance() {
     };
   } catch (e) { setTimeout(connectBinance, 8000); }
 }
-
 function connectOKX() {
   try {
     const ws = new WebSocket("wss://ws.okx.com:8443/ws/v5/public");
@@ -286,7 +281,6 @@ function connectOKX() {
     const ping = setInterval(() => { try { if (ws.readyState === 1) ws.send("ping"); else clearInterval(ping); } catch (e) { clearInterval(ping); } }, 20000);
   } catch (e) { setTimeout(connectOKX, 8000); }
 }
-
 function connectPM() {
   try {
     const ws = new WebSocket("wss://ws-live-data.polymarket.com");
@@ -295,8 +289,10 @@ function connectPM() {
       ws.send(JSON.stringify({
         action: "subscribe",
         subscriptions: [
-          { topic: "crypto_prices_chainlink", type: "update", filters: "btc/usd,eth/usd,sol/usd,xrp/usd,bnb/usd,doge/usd" },
           { topic: "crypto_prices", type: "update", filters: "btcusdt,ethusdt,solusdt,xrpusdt,bnbusdt,dogeusdt" },
+          { topic: "crypto_prices_chainlink", type: "update", filters: '{"symbol":"btc/usd"}' },
+          { topic: "crypto_prices_chainlink", type: "update", filters: '{"symbol":"eth/usd"}' },
+          { topic: "crypto_prices_chainlink", type: "update", filters: '{"symbol":"sol/usd"}' },
         ],
       }));
     };
@@ -308,6 +304,25 @@ function connectPM() {
       try {
         const msg = JSON.parse(raw);
         const topic = msg.topic || "";
+        // Chainlink 聚合格式：{payload:{data:[{timestamp,value}...]}} 无 symbol —— 按价格区间推断币种，
+        // 并把整段秒级历史一次性入缓冲（页面打开几秒即有完整 TWAP 覆盖）
+        if (topic === "crypto_prices_chainlink" && msg.payload && msg.payload.data && Array.isArray(msg.payload.data)) {
+          for (const it of msg.payload.data) {
+            const v = parseFloat(it.value != null ? it.value : it.price);
+            if (!isFinite(v) || v <= 0) continue;
+            const t = it.timestamp ? Number(it.timestamp) : Date.now();
+            const c = clCoinByRange(v);
+            if (!c) continue;
+            clLatest[c] = { v, t };
+            const buf = clBuf[c] || (clBuf[c] = []);
+            const last = buf.length ? buf[buf.length - 1] : null;
+            if (!last || t - last.t >= 900) {
+              buf.push({ v, t });
+              const cutoff = t - 1000 * 1000;
+              while (buf.length > 2 && buf[0].t < cutoff) buf.shift();
+            }
+          }
+        }
         let items = [];
         if (msg.payload) items = Array.isArray(msg.payload) ? msg.payload : [msg.payload];
         else if (msg.symbol) items = [msg];
@@ -316,15 +331,28 @@ function connectPM() {
           if (!sym) continue;
           const v = parseFloat(p.value != null ? p.value : p.price);
           if (!isFinite(v)) continue;
+          const t = p.timestamp ? Number(p.timestamp) : Date.now();
           const coin = (topic === "crypto_prices" ? PM_BINANCE_MAP[sym] : PM_MAP[sym]) || (!topic ? (PM_MAP[sym] || PM_BINANCE_MAP[sym]) : null);
-          if (coin) liveLatest.polymarket[coin] = { v, t: p.timestamp ? Number(p.timestamp) : Date.now() };
+          if (coin) liveLatest.polymarket[coin] = { v, t };
+          // Chainlink 多所聚合流（Polymarket 结算源）单独存储 + 环形缓冲算 TWAP
+          if ((topic === "crypto_prices_chainlink" || (!topic && PM_MAP[sym])) && PM_MAP[sym]) {
+            const c = PM_MAP[sym];
+            const q = { v, t };
+            clLatest[c] = q;
+            const buf = clBuf[c] || (clBuf[c] = []);
+            const last = buf.length ? buf[buf.length - 1] : null;
+            if (!last || t - last.t >= 900) { // 同秒去重
+              buf.push(q);
+              const cutoff = t - 1000 * 1000; // 保留 ~1000 秒
+              while (buf.length > 2 && buf[0].t < cutoff) buf.shift();
+            }
+          }
         }
       } catch (e) {}
     };
     const ping = setInterval(() => { try { if (ws.readyState === 1) ws.send("PING"); else clearInterval(ping); } catch (e) { clearInterval(ping); } }, 5000);
   } catch (e) { setTimeout(connectPM, 8000); }
 }
-
 // ---------- 10s 聚合（对齐到桶边界后 300ms 收桶） ----------
 function doTick() {
   const now = Date.now();
@@ -349,9 +377,143 @@ function scheduleTick() {
   const next = bucketStart(now) + 10000 + 300;
   setTimeout(() => { doTick(); scheduleTick(); }, next - now);
 }
-
 // ---------- 消息入口 ----------
-self.onmessage = (e) => {
+// ---------- Chainlink TWAP 计算与推送（每秒） ----------
+function clWindowStart(buf, winSec, now) {
+  const wStart = Math.floor(now / (winSec * 1000)) * winSec * 1000;
+  let best = null, bestD = 1e9;
+  for (const q of buf) {
+    const d = Math.abs(q.t - wStart);
+    if (d <= 5000 && d < bestD) { best = q.v; bestD = d; }
+  }
+  if (best !== null) return { price: best, approx: false };
+  // 近似：用缓冲区里最早值（页面加载晚于窗口开始）
+  return { price: buf.length ? buf[0].v : null, approx: true };
+}
+function postChainlink() {
+  const now = Date.now();
+  const coins = {};
+  for (const c in clLatest) {
+    const buf = clBuf[c] || [];
+    const recent = buf.filter((q) => q.t >= now - 61000);
+    const span = recent.length ? recent[recent.length - 1].t - recent[0].t : 0;
+    const twap = span >= 45000 ? recent.reduce((s, q) => s + q.v, 0) / recent.length : null;
+    const s5 = clWindowStart(buf, 300, now);
+    const s15 = clWindowStart(buf, 900, now);
+    coins[c] = {
+      p: clLatest[c].v, t: clLatest[c].t,
+      twap,
+      start5: s5.price, approx5: s5.approx,
+      gap5: twap != null && s5.price ? (twap - s5.price) / s5.price * 1e4 : null,
+      start15: s15.price, approx15: s15.approx,
+      gap15: twap != null && s15.price ? (twap - s15.price) / s15.price * 1e4 : null,
+    };
+  }
+  post({ type: "chainlink", coins, now });
+}
+setInterval(postChainlink, 1000);
+
+  // ---------- 六源 BTC 1 秒价格（Chainlink/Binance/OKX 已有 + Coinbase/Kraken WS + Uniswap 链上池） ----------
+  const mexSrc = {};            // coinbase/kraken/uniswap -> {v, t, rtt, msgs}
+  const MEX_COIN = "btc";
+  function connectCoinbase() {
+    try {
+      const ws = new WebSocket("wss://ws-feed.exchange.coinbase.com");
+      ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", product_ids: ["BTC-USD"], channels: ["ticker"] }));
+      ws.onmessage = (ev) => {
+        try { const m = JSON.parse(ev.data); if (m.type === "ticker" && m.price) mexSrc.coinbase = { v: parseFloat(m.price), t: Date.now() }; } catch (e) {}
+      };
+      ws.onclose = () => setTimeout(connectCoinbase, 8000);
+      ws.onerror = () => { try { ws.close(); } catch (e) {} };
+    } catch (e) { setTimeout(connectCoinbase, 8000); }
+  }
+  function connectKraken() {
+    try {
+      const ws = new WebSocket("wss://ws.kraken.com/v2");
+      ws.onopen = () => ws.send(JSON.stringify({ method: "subscribe", params: { channel: "ticker", symbol: ["BTC/USD"], snapshot: false } }));
+      ws.onmessage = (ev) => {
+        try { const m = JSON.parse(ev.data); if (m.channel === "ticker" && m.data && m.data[0] && m.data[0].last) mexSrc.kraken = { v: parseFloat(m.data[0].last), t: Date.now() }; } catch (e) {}
+      };
+      ws.onclose = () => setTimeout(connectKraken, 8000);
+      ws.onerror = () => { try { ws.close(); } catch (e) {} };
+    } catch (e) { setTimeout(connectKraken, 8000); }
+  }
+  // Uniswap V3 WBTC/USDC 0.05% 池：factory.getPool 解析池地址 → slot0 轮询
+  const UNI = {
+    factory: "0x1f98431c8ad98523631ae4a59f267346ea31f984",
+    wbtc: "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
+    usdc: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    rpcs: ["https://cloudflare-eth.com", "https://ethereum-rpc.publicnode.com", "https://eth.llamarpc.com", "https://rpc.ankr.com/eth"],
+    pool: null, idx: 0,
+  };
+  async function uniRpc(to, data) {
+    const url = UNI.rpcs[UNI.idx % UNI.rpcs.length]; UNI.idx++;
+    const t0 = Date.now();
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }) });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error.message);
+    return { result: j.result, rtt: Date.now() - t0 };
+  }
+  async function uniInit() {
+    const data = "0x1698ee82" + UNI.wbtc.slice(2).padStart(64, "0") + UNI.usdc.slice(2).padStart(64, "0") + (500).toString(16).padStart(64, "0");
+    const r = await uniRpc(UNI.factory, data);
+    UNI.pool = "0x" + r.result.slice(26);
+  }
+  let uniBusy = false;
+  async function uniPoll() {
+    if (uniBusy) return;
+    uniBusy = true;
+    try {
+      if (!UNI.pool) await uniInit();
+      if (!UNI.pool) return;
+      const t0 = Date.now();
+      const r = await uniRpc(UNI.pool, "0x3850c7bd"); // slot0()
+      const sqrtP = BigInt(r.result.slice(2, 66));
+      const raw = Number(sqrtP * sqrtP) / Number(1n << 192n);
+      const price = raw * 100; // 10^(dec0-dec2)=10^(8-6)
+      if (isFinite(price) && price > 1000) mexSrc.uniswap = { v: price, t: Date.now(), rtt: Date.now() - t0 };
+    } catch (e) { /* 换 RPC 重试 */ }
+    finally { uniBusy = false; }
+  }
+  setInterval(uniPoll, 1500);
+  uniPoll();
+  function mexPost() {
+    const now = Date.now();
+    const map = {
+      chainlink: clLatest.btc ? { v: clLatest.btc.v, t: clLatest.btc.t } : null,
+      binance: liveLatest.binance.btc ? { v: liveLatest.binance.btc.v, t: liveLatest.binance.btc.t } : null,
+      okx: liveLatest.okx.btc ? { v: liveLatest.okx.btc.v, t: liveLatest.okx.btc.t } : null,
+      coinbase: mexSrc.coinbase, kraken: mexSrc.kraken, uniswap: mexSrc.uniswap,
+    };
+    const srcs = {};
+    for (const k in map) {
+      const v = map[k];
+      if (v && now - v.t < 10000) { const o = { p: v.v, t: v.t }; if (v.rtt != null) o.rtt = v.rtt; if (mexRtt[k] != null) o.rtt = mexRtt[k]; srcs[k] = o; }
+    }
+    post({ type: "mex", srcs, now });
+  }
+  setInterval(mexPost, 1000);
+  connectCoinbase();
+  connectKraken();
+  // 全源 RTT 探测（轮换，每源约 30 秒一次；REST 探测同时是连通性诊断）
+  const MEX_PROBES = [
+    { key: "binance", url: "https://data-api.binance.vision/api/v3/time" },
+    { key: "coinbase", url: "https://api.coinbase.com/v2/time" },
+    { key: "kraken", url: "https://api.kraken.com/0/public/Time" },
+    { key: "okx", url: "https://www.okx.com/api/v5/public/time" },
+    { key: "chainlink", url: "https://gamma-api.polymarket.com/markets?limit=1" },
+  ];
+  let probeIdx = 0;
+  setInterval(async () => {
+    const p = MEX_PROBES[probeIdx % MEX_PROBES.length]; probeIdx++;
+    const t0 = Date.now();
+    try {
+      await fetch(p.url, { cache: "no-store", signal: AbortSignal.timeout(5000) });
+      mexRtt[p.key] = Date.now() - t0;
+    } catch (e) { mexRtt[p.key] = -1; }
+  }, 5000);
+
+  self.onmessage = (e) => {
   const m = e.data;
   if (m.type === "init") {
     params = Object.assign(params, m.params || {});

@@ -3,3 +3,4 @@ node_modules/
 .dev.vars
 *.log
 vps/vps_config.json
+dist/

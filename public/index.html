@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>五币联动监测 · 10s</title>
 <link rel="icon" href="data:,">
-<script src="echarts.min.js"></script>
+<script src="echarts.min.js?v=__VER__"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { background: #0f1216; color: #d8dee6; font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
@@ -20,7 +20,13 @@ header h1 { font-size: 15px; font-weight: 600; color: #fff; white-space: nowrap;
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .dot.ok { background: #22a06b; } .dot.bad { background: #e04b4b; } .dot.mid { background: #ef9f27; }
 .spacer { flex: 1; }
+.vpngate-link { display: inline-block; background: #1a2029; color: #aab4c0; border: 1px solid #28313d; padding: 5px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; white-space: nowrap; }
+.vpngate-link:hover { border-color: #185fa5; color: #fff; }
 select, button.act { background: #1a2029; color: #d8dee6; border: 1px solid #28313d; border-radius: 6px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
+.coinbtn { background: #1a2029; color: #6b7684; border: 1px solid #28313d; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+.coinbtn.on { color: #fff; border-color: var(--c, #185fa5); }
+#bfStatus { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#btnBackfill:disabled { opacity: .55; cursor: wait; }
 .badge { padding: 4px 16px; background: #141920; border-bottom: 1px solid #232a33; color: #8b97a5; font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; }
 .badge .warn { color: #ef9f27; }
 main { display: flex; gap: 12px; padding: 12px 16px; align-items: stretch; }
@@ -56,6 +62,41 @@ tr:hover td { background: #171d25; }
 #modal .ok { background: #185fa5; color: #fff; } #modal .cancel { background: #1a2029; color: #d8dee6; border: 1px solid #28313d !important; }
 footer { padding: 8px 16px 20px; color: #55606d; font-size: 12px; }
 .empty { color: #6b7684; padding: 30px; text-align: center; }
+.mon { display: grid; grid-template-columns: 1.25fr 1fr; gap: 12px; padding: 0 16px 12px; }
+#mexSection { display: grid; grid-template-columns: 1.8fr 1fr; gap: 12px; padding: 0 16px 12px; }
+#mexSection .block { min-width: 0; }
+.mexbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; font-size: 12px; color: #8b97a5; }
+.mexbar select, .mexbar input { background: #1a2029; color: #d8dee6; border: 1px solid #28313d; border-radius: 5px; padding: 2px 5px; font-size: 12px; }
+.mexbar input[type=color] { width: 26px; height: 22px; padding: 0; border: 1px solid #28313d; background: none; cursor: pointer; }
+.mexbar input[type=range] { width: 90px; }
+.mexsw { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
+#mexChart { width: 100%; height: 320px; }
+#mexStat td { font-size: 12px; }
+b.on { color: #22a06b; } b.off { color: #e04b4b; }
+.dt { font-size: 11px; color: #6b7684; margin-top: 5px; }
+.mon .block h3 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cl-fav { font-weight: 600; }
+.cl-fav.up { color: #e04b4b; } .cl-fav.dn { color: #22a06b; }
+.cl-gap { font-family: Consolas, monospace; }
+.sig { border: 1px solid #28313d; border-radius: 8px; padding: 7px 10px; margin-bottom: 7px; background: #171d25; }
+.sig.lv3 { border-color: #e04b4b; box-shadow: 0 0 6px rgba(224,75,75,.35); }
+.sig .hd { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #aab4c0; }
+.sig .hd b { color: #fff; }
+.sig .row { display: flex; justify-content: space-between; font-size: 12px; color: #8b97a5; padding: 1px 0; }
+.sig a { color: #378add; text-decoration: none; }
+.go { color: #e04b4b; font-weight: 700; }
+.edge { color: #ef9f27; font-weight: 600; }
+.watch { color: #8b97a5; }
+td .siglv { display: inline-block; padding: 1px 7px; border-radius: 8px; font-size: 11px; }
+td .siglv.s { background: rgba(224,75,75,.18); color: #e04b4b; }
+td .siglv.m { background: rgba(239,159,39,.15); color: #ef9f27; }
+td .siglv.g { background: rgba(34,160,107,.15); color: #22a06b; }
+.wf-feed { max-height: 210px; overflow-y: auto; font-size: 12px; }
+.wf-feed .fi { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; border-bottom: 1px dashed #232a33; color: #aab4c0; }
+.wf-feed .fi b { color: #d8dee6; font-weight: 500; }
+.wf-ctl { display: flex; gap: 8px; align-items: center; font-size: 12px; color: #8b97a5; }
+.wf-ctl button { background: #1a2029; color: #d8dee6; border: 1px solid #28313d; border-radius: 6px; padding: 2px 10px; cursor: pointer; font-size: 12px; }
+@media (max-width: 1100px) { .mon { grid-template-columns: 1fr; } }
 @media (max-width: 1100px) { main { flex-direction: column; } #cards { width: auto; max-height: 300px; } section.stats { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -63,20 +104,74 @@ footer { padding: 8px 16px 20px; color: #55606d; font-size: 12px; }
 <header>
   <h1>五币联动监测</h1>
   <div class="tabs" id="tabs"></div>
+  <div class="chips" id="coinToggles"></div>
   <div class="chips">
     <span class="chip" id="chipCloud">云采集 <b>…</b></span>
     <span class="chip" id="chipConn">实时 <span class="dot mid"></span></span>
     <span class="chip" id="chipRun">运行 <b>0s</b></span>
   </div>
   <div class="spacer"></div>
+  <a class="vpngate-link" href="/vpngate">⌁ VPNGate 服务器</a>
   <select id="dateSel"><option value="today">今天</option><option value="yesterday">昨天</option></select>
+  <button class="act" id="btnPred">预测面板</button>
   <button class="act" id="btnParams">参数</button>
+  <button class="act" id="btnBackfill" title="检测近48小时缺失的10s采样点，用币安官方1秒K线自动补齐并写回数据库">补齐数据</button>
+  <span class="chip" id="bfStatus"></span>
 </header>
 <div class="badge" id="badge"></div>
+<section id="mexSection">
+  <div class="block">
+    <h3>六源 BTC 1 秒价格 <span class="chip" id="mexModeInfo">偏离%模式</span></h3>
+    <div class="mexbar">
+      <span>显示</span>
+      <select id="mexMode"><option value="dev" selected>偏离%</option><option value="bps">价差bps(vs Chainlink)</option><option value="raw">原始价格</option></select>
+      <span>线宽</span><input type="range" id="mexWidth" min="1" max="4" step="0.5" value="1.5">
+      <span>突变阈值</span><input type="number" id="mexThr" value="5" min="1" step="1" style="width:52px"><span>bps</span>
+      <span id="mexColors"></span>
+    </div>
+    <div id="mexChart"></div>
+    <div class="dt">偏离% = (现价−基准)/基准；基准=面板数据窗口起点。突变点：单次跳动超过阈值时高亮标记。</div>
+  </div>
+  <div class="block">
+    <h3>来源状态与响应</h3>
+    <table id="mexStat"></table>
+    <div class="dt">WS 源显示消息间隔；REST/RPC 源显示真实往返延迟。Uniswap 为 WBTC/USDC 0.05% 池链上价（公共 RPC，尽力而为）。</div>
+  </div>
+</section>
 <main>
   <div id="chartPanel"><div id="mainChart"></div></div>
-  <aside id="cards"><h3>实时预测（BTC/ETH 拐点 → 山寨币跟随）</h3><div id="cardList"><div class="empty">等待拐点确认…</div></div></aside>
+  <aside id="cards" style="display:none"><h3>实时预测（BTC/ETH 拐点 → 山寨币跟随）</h3><div id="cardList"><div class="empty">等待拐点确认…</div></div></aside>
 </main>
+<section class="mon" id="sigSection">
+  <div class="block">
+    <h3>S1 反转接针 · 5m 开盘入场 <span class="chip" id="s1Updated">等待窗口边界…</span></h3>
+    <div style="max-height:250px;overflow:auto"><table id="s1Table"></table></div>
+    <div style="font-size:11px;color:#6b7684;margin-top:5px">触发：上一 5m 窗口涨/跌超阈值（强 ≥0.20%，中 0.15~0.20%）→ 新窗口开盘 90 秒内限价买反向一侧。回测：强信号反弹率 56~58%，建议限价 ≤0.55。</div>
+  </div>
+  <div class="block">
+    <h3>S2 TWAP 锁定收割 · 剩≤2分钟 <span class="chip" id="s2Updated">…</span></h3>
+    <div style="max-height:250px;overflow:auto"><table id="s2Table"></table></div>
+    <div style="font-size:11px;color:#6b7684;margin-top:5px">触发：剩≤120s 且 |TWAP领先|≥2bps，边际=真实概率−卖价−费 ≥2¢ → GO。真实概率来自 60 天×结算验证条件表。仅 BTC/ETH/SOL（Chainlink 流覆盖）。</div>
+  </div>
+</section>
+<section class="mon">
+  <div class="block">
+    <h3>Chainlink 多所聚合价 · Polymarket 结算源 <span class="chip" id="clUpdated">…</span></h3>
+    <div style="max-height:290px;overflow:auto"><table id="clTable"></table></div>
+    <div style="font-size:11px;color:#6b7684;margin-top:5px">TWAP领先 = 60s均值 − 当前窗口起点价；≥0 判 Up（平局算 Up）。窗口起点价标 ~ 为页面加载后近似值。</div>
+  </div>
+  <div class="block">
+    <h3>钱包共振监控（Polymarket 盈利钱包）
+      <span class="wf-ctl"><button id="wfToggle">暂停</button><label><input type="checkbox" id="wfSound" style="width:14px;height:14px"> 声音</label><button id="wfNotify">通知</button></span>
+    </h3>
+    <div class="wf-ctl" id="wfFilters" style="margin:2px 0 6px;flex-wrap:wrap"></div>
+    <div id="wfSignals"><div class="empty" style="padding:12px">等待共振信号（≥2 个跟踪钱包 120 秒内同市场同方向买入）…</div></div>
+    <div style="font-size:11px;color:#6b7684;margin:4px 0">跟踪钱包实时买入（近 30 条）：</div>
+    <div class="wf-feed" id="wfFeed"><div class="empty" style="padding:10px">…</div></div>
+    <div style="font-size:11px;color:#6b7684;margin-top:4px"><span id="wfStatus">启动中…</span></div>
+    <div style="font-size:11px;color:#6b7684;margin-top:5px">回测参考（近8h·费后EV）：单钱包跟单 −7.4% ｜ 双钱包 +8.2% ｜ ≥3钱包 +24.1%。限价 ≤ 均价+2tick，+30秒内入场。</div>
+  </div>
+</section>
 <section class="stats">
   <div class="block"><h3>滞后统计摘要（当天）</h3><div class="filters"></div><div id="statWrap" style="max-height:300px;overflow:auto"><table id="statTable"></table></div></div>
   <div class="block"><h3>时间差记录（当天）</h3>
@@ -102,6 +197,6 @@ footer { padding: 8px 16px 20px; color: #55606d; font-size: 12px; }
   <label>模式2：15min ±1% 信号 <input type="checkbox" id="pMode2" style="width:18px;height:18px"></label>
   <div class="btns"><button class="cancel" id="pCancel">取消</button><button class="ok" id="pApply">应用</button></div>
 </div></div>
-<script src="app.js"></script>
+<script src="app.js?v=__VER__"></script>
 </body>
 </html>

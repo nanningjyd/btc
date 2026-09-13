@@ -1,0 +1,10 @@
+{
+  "put_url": "https://btc.hhxx.eu.org/api/put",
+  "put_token": "",
+  "vpn_enabled": true,
+  "vpn_check_interval": 30,
+  "vpn_reconnect_wait": 10,
+  "vpn_country_filter": "",
+  "vpn_min_score": 50.0,
+  "vpn_max_ping": 300
+}

@@ -1249,7 +1249,9 @@ function collectSignals() {
     }
   }
   const act = s2.active || {};
-  for (const k in act) list.push(act[k]);
+  const nowMs = Date.now();
+  for (const k in act) if (!act[k].end || act[k].end > nowMs) list.push(act[k]);   // 过期窗口条目不再推送
+
   for (const x of (wf.activeConf || [])) list.push(x);
   return list;
 }

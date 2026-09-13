@@ -366,7 +366,7 @@ async function checkPolymarketConnectivity() {
 
 let sigCache = null;
 let d1DownUntil = 0;
-const EXT_VER = "1.6.1"; // gate-bridge-ext 扩展版本（推送扩展时同步修改） // D1 配额耗尽时的降级标记（60 秒后重试） // /api/signals 隔离级缓存（保护 D1 读取配额）
+const EXT_VER = "1.6.2"; // gate-bridge-ext 扩展版本（推送扩展时同步修改） // D1 配额耗尽时的降级标记（60 秒后重试） // /api/signals 隔离级缓存（保护 D1 读取配额）
 
 async function handleApi(request, env) {
   const url = new URL(request.url);

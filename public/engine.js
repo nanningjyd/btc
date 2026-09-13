@@ -493,6 +493,7 @@ setInterval(postChainlink, 1000);
     post({ type: "mex", srcs, now });
   }
   setInterval(mexPost, 1000);
+  setInterval(() => { post({ type: "pushTick" }); }, 3000);   // 页面后台限流时由 Worker 触发信号推送
   connectCoinbase();
   connectKraken();
   // 全源 RTT 探测（轮换，每源约 30 秒一次；REST 探测同时是连通性诊断）

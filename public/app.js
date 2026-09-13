@@ -119,6 +119,8 @@ worker.onmessage = (e) => {
     clStore.coins = m.coins;
     clStore.lastTs = Date.now();
     renderChainlink();
+  } else if (m.type === "pushTick") {
+    doPushSignals();               // Worker 后台触发（页面被限流时的主路径）
   } else if (m.type === "mex") {
     for (const k in m.srcs) {
       const arr = mexBuf[k] || (mexBuf[k] = []);
@@ -1256,15 +1258,16 @@ function collectSignals() {
   return list;
 }
 let lastPushKey = "__init__", lastPushAt = 0;
-setInterval(async () => {
+function doPushSignals() {
   try {
     const list = collectSignals();
     const ident = JSON.stringify(list.map((s) => [s.type, s.coin, s.per, s.side, s.end]));
     if (ident === lastPushKey && Date.now() - lastPushAt < 30000) return;  // 信号集合未变：30秒才刷新数值（省D1写配额）
     lastPushKey = ident; lastPushAt = Date.now();
-    await fetch("/api/signals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: PUT_TOKEN, list }) });
+    fetch("/api/signals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: PUT_TOKEN, list }) }).catch(() => {});
   } catch (e) {}
-}, 3000);
+}
+setInterval(doPushSignals, 3000);   // 页面自身计时（前台正常路径）
 
 // ---------- 交互 ----------
 function initMexControls() {

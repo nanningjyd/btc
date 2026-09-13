@@ -366,7 +366,7 @@ async function checkPolymarketConnectivity() {
 
 let sigCache = null;
 let d1DownUntil = 0;
-const EXT_VER = "1.6.2"; // gate-bridge-ext 扩展版本（推送扩展时同步修改） // D1 配额耗尽时的降级标记（60 秒后重试） // /api/signals 隔离级缓存（保护 D1 读取配额）
+const EXT_VER = "1.6.3"; // gate-bridge-ext 扩展版本（推送扩展时同步修改） // D1 配额耗尽时的降级标记（60 秒后重试） // /api/signals 隔离级缓存（保护 D1 读取配额）
 
 async function handleApi(request, env) {
   const url = new URL(request.url);
@@ -652,6 +652,11 @@ async function handleApi(request, env) {
     const cmd = await env.DB.prepare("SELECT v FROM meta WHERE k='commands'").all();
     let command = null;
     try { command = JSON.parse((cmd.results[0] || {}).v || "null"); } catch (e) {}
+    if (url.searchParams.get("result")) {
+      let result = null;
+      try { result = JSON.parse(((await env.DB.prepare("SELECT v FROM meta WHERE k='cmd_result'").all()).results[0] || {}).v || "null"); } catch (e) {}
+      return jresp({ cmd: command, result });
+    }
     return jresp({ cmd: command });
   }
   if (path === "/api/wf-book") {
